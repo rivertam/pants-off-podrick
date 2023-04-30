@@ -129,7 +129,6 @@ impl Bot {
                                 continue;
                             }
 
-                            println!("hour: {}", timestamp.hour());
                             if timestamp.hour() == 6 {
                                 morning = true;
                                 if pants_off.proper {
