@@ -23,6 +23,65 @@ struct PantsOff {
 }
 
 impl Bot {
+    async fn streaks(&self, ctx: &Context) -> String {
+        let mut streak_starts = HashMap::new();
+
+        let now = chrono::Utc::now().with_timezone(&chrono_tz::America::New_York);
+        let mut last_pants_off = now.date_naive();
+
+        let mut messages = self.channel_id.messages_iter(&ctx.http).boxed();
+        while let Some(Ok(message)) = messages.next().await {
+            let timestamp = message
+                .timestamp
+                .with_timezone(&chrono_tz::America::New_York);
+
+            if last_pants_off - timestamp.date_naive() > chrono::Duration::days(1) {
+                break;
+            }
+
+            if timestamp.minute() != 7 {
+                continue;
+            }
+
+            let previous_streak_start = streak_starts
+                .get(&message.author.id)
+                .cloned()
+                .unwrap_or(now + chrono::Duration::days(1));
+
+            let time_til_next = previous_streak_start
+                .date_naive()
+                .signed_duration_since(timestamp.date_naive())
+                .num_days();
+
+            if time_til_next > 1 {
+                continue;
+            }
+
+            last_pants_off = timestamp.date_naive();
+            streak_starts.insert(message.author.id, timestamp);
+        }
+
+        let mut user_names = HashMap::new();
+        let user_ids = streak_starts.keys().cloned().collect::<Vec<_>>();
+        let names =
+            futures::future::join_all(user_ids.iter().map(|user_id| user_id.to_user(&ctx.http)))
+                .await;
+
+        for (user_id, name) in streak_starts.keys().zip(names.iter()) {
+            user_names.insert(*user_id, name.as_ref().unwrap().name.clone());
+        }
+
+        streak_starts
+            .into_iter()
+            .map(|(user_id, timestamp)| {
+                let days_since = timestamp.signed_duration_since(now).num_days().abs();
+
+                format!("{}: {} days", user_names.get(&user_id).unwrap(), days_since)
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
     async fn score(&self, ctx: &Context, full: bool) -> String {
         let mut messages = self.channel_id.messages_iter(&ctx.http).boxed();
 
@@ -241,20 +300,26 @@ impl EventHandler for Bot {
         info!("{} is connected!", ready.user.name);
 
         let commands = GuildId::set_application_commands(&self.guild_id, &ctx.http, |commands| {
-            commands.create_application_command(|command| {
-                command
-                    .name("score")
-                    .description("post the pants-off score")
-            })
+            commands
+                .create_application_command(|command| {
+                    command
+                        .name("score")
+                        .description("post the pants-off score")
+                })
+                .create_application_command(|command| {
+                    command
+                        .name("streaks")
+                        .description("post the pants-off streaks")
+                })
         })
         .await
         .unwrap();
 
         info!("Successfully registered {:?} commands", commands);
 
-        let score = self.score(&ctx, true).await;
+        let streaks = self.streaks(&ctx).await;
 
-        println!("Ran score: {}", score);
+        println!("streaks: {}", streaks);
     }
 
     async fn interaction_create(&self, ctx: Context, interaction: Interaction) {
@@ -266,7 +331,7 @@ impl EventHandler for Bot {
 
         let response_content = match command.data.name.as_str() {
             "score" => "Counting...".to_owned(),
-
+            "streaks" => "Counting...".to_owned(),
             command => unreachable!("Unknown command: {}", command),
         };
 
@@ -282,28 +347,28 @@ impl EventHandler for Bot {
             return;
         }
 
-        let typing = if let Ok(typing) = self.channel_id.start_typing(&ctx.http) {
-            typing
-        } else {
-            eprintln!("Failed to start typing");
-            return;
+        match command.data.name.as_str() {
+            "score" => {
+                let score = self.score(&ctx, false).await;
+                command
+                    .edit_original_interaction_response(&ctx.http, |response| {
+                        response.content(format!("{}", score))
+                    })
+                    .await
+                    .unwrap();
+            }
+            "streaks" => {
+                let streaks = self.streaks(&ctx).await;
+
+                command
+                    .edit_original_interaction_response(&ctx.http, |response| {
+                        response.content(format!("Current Streaks:\n{}", streaks))
+                    })
+                    .await
+                    .unwrap();
+            }
+            command => unreachable!("Unknown command: {}", command),
         };
-
-        println!("Counting...");
-
-        let score = self.score(&ctx, false).await;
-
-        if typing.stop().is_none() {
-            eprintln!("Failed to stop typing");
-            return;
-        }
-
-        command
-            .edit_original_interaction_response(&ctx.http, |response| {
-                response.content(format!("{}", score))
-            })
-            .await
-            .unwrap();
     }
 }
 
