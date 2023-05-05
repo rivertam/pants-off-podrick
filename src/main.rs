@@ -24,9 +24,19 @@ struct PantsOff {
 
 impl Bot {
     async fn streaks(&self, ctx: &Context) -> String {
+        // user -> timestamp of oldest discovered pants off that has been
+        // followed by a consistent streak of pants off
         let mut streak_starts = HashMap::new();
 
         let now = chrono::Utc::now().with_timezone(&chrono_tz::America::New_York);
+
+        let start_looking_date = if now.time() < chrono::NaiveTime::from_hms_opt(18, 7, 0).unwrap()
+        {
+            now.date_naive()
+        } else {
+            now.date_naive().succ_opt().unwrap()
+        };
+
         let mut last_pants_off = now.date_naive();
 
         let mut messages = self.channel_id.messages_iter(&ctx.http).boxed();
@@ -40,16 +50,16 @@ impl Bot {
             }
 
             if timestamp.minute() != 7 {
+                // violations don't count towards streaks
                 continue;
             }
 
             let previous_streak_start = streak_starts
                 .get(&message.author.id)
                 .cloned()
-                .unwrap_or(now + chrono::Duration::days(1));
+                .unwrap_or(start_looking_date);
 
             let time_til_next = previous_streak_start
-                .date_naive()
                 .signed_duration_since(timestamp.date_naive())
                 .num_days();
 
@@ -58,7 +68,7 @@ impl Bot {
             }
 
             last_pants_off = timestamp.date_naive();
-            streak_starts.insert(message.author.id, timestamp);
+            streak_starts.insert(message.author.id, timestamp.date_naive());
         }
 
         let mut user_names = HashMap::new();
@@ -74,7 +84,10 @@ impl Bot {
         streak_starts
             .into_iter()
             .map(|(user_id, timestamp)| {
-                let days_since = timestamp.signed_duration_since(now).num_days().abs();
+                let days_since = timestamp
+                    .signed_duration_since(now.date_naive())
+                    .num_days()
+                    .abs();
 
                 format!("{}: {} days", user_names.get(&user_id).unwrap(), days_since)
             })
