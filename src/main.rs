@@ -7,6 +7,7 @@ use serenity::model::channel::Message;
 use serenity::model::gateway::Ready;
 use serenity::model::prelude::*;
 use serenity::prelude::*;
+use shuttle_runtime::start;
 use shuttle_secrets::SecretStore;
 use std::collections::HashMap;
 use tracing::{error, info};
@@ -85,7 +86,7 @@ impl Bot {
             .into_iter()
             .map(|(user_id, timestamp)| {
                 let days_since = timestamp
-                    .signed_duration_since(now.date_naive())
+                    .signed_duration_since(start_looking_date)
                     .num_days()
                     .abs();
 
